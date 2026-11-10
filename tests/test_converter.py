@@ -127,9 +127,9 @@ class ConverterTests(unittest.TestCase):
             converter.SubscriptionRedirect().redirect_request(
                 Request(url), None, 302, "", {}, "http://example.org/sub")
 
-    def run_cli(self, *args, data=None):
+    def run_cli(self, *args, data=None, cwd=ROOT):
         return subprocess.run([sys.executable, str(ROOT / "converter.py"), *map(str, args)],
-                              input=data, capture_output=True, cwd=ROOT, check=False)
+                              input=data, capture_output=True, cwd=cwd, check=False)
 
     def test_cli_permissions_and_secret_free_errors(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -149,6 +149,52 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertNotIn(b"sensitive-token", result.stderr)
 
+    def test_single_file_uses_automatic_output_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "phone.home.txt"
+            source.write_text(REALITY + "\n", encoding="utf-8")
+            result = self.run_cli("--input", source, cwd=root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = root / "json" / "phone.home.json"
+            config = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(config["outbounds"][0]["tag"], "Demo REALITY")
+            self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+
+    def test_directory_keeps_configs_separate_and_continues_after_invalid_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = root / "vless-links"
+            sources.mkdir()
+            (sources / ".ignore").write_text("ignored", encoding="utf-8")
+            (sources / "nested").mkdir()
+            (sources / "phone.txt").write_text(REALITY, encoding="utf-8")
+            (sources / "tablet").write_text(WS, encoding="utf-8")
+            (sources / "broken.txt").write_bytes(PAYLOAD)
+            output = root / "json"
+            output.mkdir()
+            (output / "broken.json").write_text("previous", encoding="utf-8")
+            result = self.run_cli("--input", sources, cwd=root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b"Expected exactly one VLESS URI", result.stderr)
+            self.assertEqual(sorted(path.name for path in output.iterdir()),
+                             ["broken.json", "phone.json", "tablet.json"])
+            self.assertEqual((output / "broken.json").read_text(encoding="utf-8"), "previous")
+            for name, expected in (("phone.json", "Demo REALITY"), ("tablet.json", "Demo WebSocket")):
+                config = json.loads((output / name).read_text(encoding="utf-8"))
+                self.assertEqual([item["tag"] for item in config["outbounds"] if item["type"] == "vless"],
+                                 [expected])
+
+    def test_directory_rejects_duplicate_output_names_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "phone.txt").write_text(REALITY, encoding="utf-8")
+            (root / "Phone.uri").write_text(WS, encoding="utf-8")
+            result = self.run_cli("--input", root, cwd=root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b"same output filename", result.stderr)
+            self.assertFalse((root / "json").exists())
+
     def test_checker_failure_keeps_existing_output(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "config.json"
@@ -165,6 +211,15 @@ class ConverterTests(unittest.TestCase):
             result = self.run_cli("--input", "-", "-o", Path(folder) / "config.json",
                                   "--check", TEST_BINARY, data=PAYLOAD)
             self.assertEqual(result.returncode, 0, result.stderr)
+            root = Path(folder)
+            links = root / "vless-links"
+            links.mkdir()
+            (links / "reality.txt").write_text(REALITY, encoding="utf-8")
+            (links / "websocket.txt").write_text(WS, encoding="utf-8")
+            result = self.run_cli("--input", links, "--check", TEST_BINARY, cwd=root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sorted(path.name for path in (root / "json").iterdir()),
+                             ["reality.json", "websocket.json"])
 
 
 if __name__ == "__main__":

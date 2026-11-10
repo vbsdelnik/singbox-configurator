@@ -354,28 +354,76 @@ def load_input(name):
         return read_limited(stream)
 
 
+def convert_link_files(source, template_path, template, checker):
+    output_dir = Path("json").absolute()
+    if source.is_dir():
+        files = sorted(path for path in source.iterdir()
+                       if not path.name.startswith(".") and not path.is_symlink()
+                       and path.is_file() and path.resolve() != template_path.resolve())
+    else:
+        files = [source] if source.is_file() else []
+    if not files:
+        raise ConversionError("No input files found.")
+
+    destinations = [output_dir / (path.stem + ".json") for path in files]
+    names = {unicodedata.normalize("NFC", path.name).casefold() for path in destinations}
+    if len(names) != len(destinations):
+        raise ConversionError("Multiple input files would produce the same output filename.")
+    protected = {path.resolve() for path in [template_path, *files]}
+    if any(path.resolve() in protected for path in destinations):
+        raise ConversionError("Output must differ from template and input files.")
+
+    output_dir.mkdir(exist_ok=True)
+    saved = 0
+    for index, (path, destination) in enumerate(zip(files, destinations), 1):
+        try:
+            uri = load_input(str(path)).decode("utf-8-sig").strip()
+            if not uri.lower().startswith("vless://") or len(uri.splitlines()) != 1:
+                raise ConversionError("Expected exactly one VLESS URI.")
+            config, _ = build_config(template, [("VLESS URI", uri)])
+            write_config(config, destination, checker)
+        except ConversionError as error:
+            print(f"Error in input file {index}: {error}", file=sys.stderr)
+        except (OSError, UnicodeError, ValueError, RuntimeError):
+            print(f"Error in input file {index}: could not read input or write configuration.",
+                  file=sys.stderr)
+        else:
+            saved += 1
+    print(f"Saved {saved} of {len(files)} configuration(s) in json/.", file=sys.stderr)
+    return int(saved != len(files))
+
+
 def main(argv=None):
     parser = SafeParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--template", type=Path, default=TEMPLATE, help="JSONC template")
-    parser.add_argument("-o", "--output", type=Path, required=True, help="destination JSON file")
+    parser.add_argument("-o", "--output", type=Path, help="combine sources into this JSON file")
     parser.add_argument("--vless", action="append", default=[], metavar="URI", help="VLESS link (repeatable)")
     parser.add_argument("--subscription", action="append", default=[], metavar="URL", help="3x-ui URL (repeatable)")
     parser.add_argument("--subscription-url-file", action="append", default=[], metavar="FILE",
                         help="read one subscription URL from FILE or stdin (-)")
-    parser.add_argument("--input", action="append", default=[], metavar="FILE",
-                        help="read URI list or Base64 subscription from FILE or stdin (-)")
+    parser.add_argument("--input", action="append", default=[], metavar="PATH",
+                        help="convert one file or directory to json/, or read a list with -o")
     parser.add_argument("--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
     parser.add_argument("--check", metavar="SING_BOX", help="run sing-box check before replacing output")
     args = parser.parse_args(argv)
     sources = args.input + args.subscription_url_file
     if not (args.vless or args.subscription or sources) or sources.count("-") > 1:
         parser.error("")
+    if args.output is None and (len(args.input) != 1 or args.input[0] == "-"
+                                or args.vless or args.subscription or args.subscription_url_file):
+        parser.error("")
     try:
+        template = load_input(str(args.template)).decode("utf-8-sig")
+        checker = args.check
+        if checker and "/" in checker:
+            checker = str(Path(checker).absolute())
+        if args.output is None:
+            return convert_link_files(Path(args.input[0]), args.template, template, checker)
+
         destination = args.output.absolute()
         input_paths = [args.template, *(Path(name) for name in sources if name != "-")]
         if any(destination.resolve() == path.resolve() for path in input_paths):
             raise ConversionError("Output must differ from template and input files.")
-        template = load_input(str(args.template)).decode("utf-8-sig")
         links = [(f"VLESS argument {i}", link.strip()) for i, link in enumerate(args.vless, 1)]
         payloads = (load_input(name) for name in args.input)
         url_files = (load_input(name).decode("utf-8-sig").strip()
@@ -390,9 +438,6 @@ def main(argv=None):
                     continue
                 links.append((f"Input {source}, entry {entry}", link))
         config, count = build_config(template, links)
-        checker = args.check
-        if checker and "/" in checker:
-            checker = str(Path(checker).absolute())
         write_config(config, destination, checker)
     except ConversionError as error:
         print(f"Error: {error}", file=sys.stderr)
