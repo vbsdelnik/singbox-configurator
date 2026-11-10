@@ -2,7 +2,7 @@
 
 Конвертирует VLESS-ссылки и подписки 3x-ui в конфигурацию sing-box. Формирует список узлов, группу автоматической проверки URLTest и ручные селекторы. DNS, TUN и правила маршрутизации задаются шаблоном.
 
-Для генерации нужен Python 3.9 или новее. Сторонних Python-библиотек нет. Для опциональной проверки нужен установленный sing-box. Схема штатного шаблона проверена с sing-box 1.14.4.
+Запускайте конвертер из корня проекта как `./converter.py`. Скрипт сам использует установленный `python3` версии 3.9 или новее. Сторонних Python-библиотек нет. Для опциональной проверки нужен установленный sing-box. Схема штатного шаблона проверена с sing-box 1.14.4.
 
 ## Откуда взять ссылки
 
@@ -13,8 +13,8 @@
 Запускайте команды из корня проекта. Для одного конфига укажите путь к файлу, для нескольких — путь к папке:
 
 ```sh
-python3 converter.py --input vless-links/phone.txt
-python3 converter.py --input vless-links/
+./converter.py --input vless-links/phone.txt
+./converter.py --input vless-links/
 ```
 
 В первом случае получится `json/phone.json`. Во втором конвертер создаст отдельный JSON для каждого файла верхнего уровня. Например, `phone.txt` и `tablet.txt` станут `phone.json` и `tablet.json`. Папка `json/` создаётся автоматически в текущем каталоге и исключена из Git. Скрытые файлы, вложенные папки и символические ссылки при сканировании папки пропускаются.
@@ -24,7 +24,7 @@ python3 converter.py --input vless-links/
 Флаг `--check` запускает предварительную проверку через sing-box:
 
 ```sh
-python3 converter.py --input vless-links/ --check ./tests/sing-box
+./converter.py --input vless-links/ --check ./tests/sing-box
 ```
 
 Команда выводит число успешно проверенных конфигов. В режиме `--check` выходные JSON-файлы не создаются и не заменяются. Если все конфиги прошли проверку, повторите команду без `--check`, чтобы их сохранить. То же поведение действует для режима с `-o`.
@@ -36,8 +36,8 @@ python3 converter.py --input vless-links/ --check ./tests/sing-box
 Создайте файл в [`subscriptions/`](subscriptions/) и запишите в него полный URL подписки одной строкой. Имя файла сохранится при загрузке списка ссылок.
 
 ```sh
-python3 converter.py --subscription subscriptions/phone.txt
-python3 converter.py --subscription subscriptions/
+./converter.py --subscription subscriptions/phone.txt
+./converter.py --subscription subscriptions/
 ```
 
 Первая команда создаёт `vless-links/phone.txt`. Вторая обрабатывает все видимые обычные файлы верхнего уровня в `subscriptions/`. Конвертер скачивает ответ, декодирует Base64 при необходимости и сохраняет все VLESS-ссылки, по одной на строку. Другие протоколы пропускаются. Успешная загрузка заменяет одноимённый файл целиком, в том числе созданный вручную. Если сервер недоступен, VLESS-ссылок нет или одна из них не поддерживается, предыдущий файл сохраняется, остальные подписки обрабатываются, а команда возвращает ошибку.
@@ -45,7 +45,7 @@ python3 converter.py --subscription subscriptions/
 Чтобы затем сформировать отдельные JSON для всех списков, запустите:
 
 ```sh
-python3 converter.py --input vless-links/
+./converter.py --input vless-links/
 ```
 
 Флаг `--check ./tests/sing-box` также работает на этапе загрузки подписки. Он проверяет конфиг для полученного списка без записи выходных файлов. Для загрузки по умолчанию нужен HTTPS. Флаг `--allow-http` разрешает прямой HTTP-запрос. Перенаправления допускаются только на HTTPS.
@@ -55,9 +55,9 @@ python3 converter.py --input vless-links/
 Добавьте `-w` (`--write-json`) к `--subscription`, чтобы выполнить оба этапа одной командой:
 
 ```sh
-python3 converter.py -s subscriptions/phone.txt -w
-python3 converter.py -s subscriptions/ -w
-python3 converter.py -s subscriptions/ -w -c ./tests/sing-box
+./converter.py -s subscriptions/phone.txt -w
+./converter.py -s subscriptions/ -w
+./converter.py -s subscriptions/ -w -c ./tests/sing-box
 ```
 
 Для `phone.txt` получатся `vless-links/phone.txt` и `json/phone.json`. Все подписки сначала скачиваются и конвертируются, затем скрипт заменяет файлы. Ошибка любой подписки отменяет обновление всего набора. Если ошибка случится во время записи, скрипт попытается восстановить уже заменённые файлы. `-c` проверяет все конфиги без записи результатов. `-w` используется с `-s` и без `-o`.
@@ -71,9 +71,9 @@ python3 converter.py -s subscriptions/ -w -c ./tests/sing-box
 С `-o` конвертер пишет один JSON. Можно собрать его напрямую из файла подписки, папки подписок или нескольких локальных списков:
 
 ```sh
-python3 converter.py --subscription subscriptions/phone.txt -o config.json
-python3 converter.py --subscription subscriptions/ -o config.json
-python3 converter.py --input vless-links/phone.txt --input vless-links/tablet.txt -o config.json
+./converter.py --subscription subscriptions/phone.txt -o config.json
+./converter.py --subscription subscriptions/ -o config.json
+./converter.py --input vless-links/phone.txt --input vless-links/tablet.txt -o config.json
 ```
 
 Для прямой передачи URL есть `-u` (`--url`). Чтобы токен не попадал в историю команд и список процессов, передавайте путь к файлу через `--subscription`. При сборке общего конфига `--input` также принимает сохранённое тело подписки в plain text или Base64.
@@ -124,7 +124,7 @@ python3 converter.py --input vless-links/phone.txt --input vless-links/tablet.tx
 
 ```sh
 python3 -B -m unittest -v
-python3 converter.py --input tests/demo-vless.txt --check ./tests/sing-box -o tests/demo-config.json
+./converter.py --input tests/demo-vless.txt --check ./tests/sing-box -o tests/demo-config.json
 ```
 
 Тесты автоматически находят бинарник в `tests/`. Для другого расположения задайте `SING_BOX_TEST_BINARY`. Если бинарника нет, проверка через ядро пропускается, остальные тесты запускаются. Демонстрационный конфиг проверяет синтаксис и загрузку настроек без подключения к VPN.
