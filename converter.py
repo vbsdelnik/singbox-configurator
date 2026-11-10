@@ -345,10 +345,10 @@ def save_or_check_config(config, destination, checker):
 
 
 def report_check_result(passed, total):
-    print(f"sing-box check: {passed} of {total} configuration(s) passed. No JSON files written.",
+    print(f"sing-box check: {passed} of {total} configuration(s) passed. No output files written.",
           file=sys.stderr)
     if passed == total:
-        print("Run the same command without --check to save the configuration(s).", file=sys.stderr)
+        print("Run the same command without --check to save the output.", file=sys.stderr)
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -364,8 +364,7 @@ def load_input(name):
         return read_limited(stream)
 
 
-def convert_link_files(source, template_path, template, checker):
-    output_dir = Path("json").absolute()
+def input_files(source, template_path):
     if source.is_dir():
         files = sorted(path for path in source.iterdir()
                        if not path.name.startswith(".") and not path.is_symlink()
@@ -374,8 +373,35 @@ def convert_link_files(source, template_path, template, checker):
         files = [source] if source.is_file() else []
     if not files:
         raise ConversionError("No input files found.")
+    return files
 
-    destinations = [output_dir / (path.stem + ".json") for path in files]
+
+def vless_entries(data, source):
+    entries = subscription_lines(data)
+    links = [(f"Input {source}, entry {index}", link)
+             for index, link in enumerate(entries, 1) if link.lower().startswith("vless:")]
+    return links, len(entries) - len(links)
+
+
+def fetch_url_file(path, allow_http):
+    url = load_input(str(path)).decode("utf-8-sig").strip()
+    return fetch_subscription(url, allow_http)
+
+
+def write_links(links, destination):
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".subscription-",
+                                     dir=destination.parent, delete=False) as stream:
+        staged = Path(stream.name)
+    try:
+        with staged.open("w", encoding="utf-8") as stream:
+            stream.writelines(link + "\n" for _, link in links)
+        staged.replace(destination)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def process_files(files, output_dir, template_path, template, checker, subscription, allow_http):
+    destinations = [output_dir / (path.name if subscription else path.stem + ".json") for path in files]
     names = {unicodedata.normalize("NFC", path.name).casefold() for path in destinations}
     if len(names) != len(destinations):
         raise ConversionError("Multiple input files would produce the same output filename.")
@@ -388,11 +414,15 @@ def convert_link_files(source, template_path, template, checker):
     completed = 0
     for index, (path, destination) in enumerate(zip(files, destinations), 1):
         try:
-            uri = load_input(str(path)).decode("utf-8-sig").strip()
-            if not uri.lower().startswith("vless://") or len(uri.splitlines()) != 1:
-                raise ConversionError("Expected exactly one VLESS URI.")
-            config, _ = build_config(template, [("VLESS URI", uri)])
-            save_or_check_config(config, destination, checker)
+            data = fetch_url_file(path, allow_http) if subscription else load_input(str(path))
+            links, skipped = vless_entries(data, index)
+            if skipped and not subscription:
+                raise ConversionError("Expected a file containing VLESS URIs.")
+            config, _ = build_config(template, links)
+            if subscription and not checker:
+                write_links(links, destination)
+            else:
+                save_or_check_config(config, destination, checker)
         except ConversionError as error:
             print(f"Error in input file {index}: {error}", file=sys.stderr)
         except (OSError, UnicodeError, ValueError, RuntimeError):
@@ -403,7 +433,8 @@ def convert_link_files(source, template_path, template, checker):
     if checker:
         report_check_result(completed, len(files))
     else:
-        print(f"Saved {completed} of {len(files)} configuration(s) in json/.", file=sys.stderr)
+        result = "VLESS list(s)" if subscription else "configuration(s)"
+        print(f"Saved {completed} of {len(files)} {result} in {output_dir.name}/.", file=sys.stderr)
     return int(completed != len(files))
 
 
@@ -412,30 +443,45 @@ def main(argv=None):
     parser.add_argument("--template", type=Path, default=TEMPLATE, help="JSONC template")
     parser.add_argument("-o", "--output", type=Path, help="combine sources into this JSON file")
     parser.add_argument("--vless", action="append", default=[], metavar="URI", help="VLESS link (repeatable)")
-    parser.add_argument("--subscription", action="append", default=[], metavar="URL", help="3x-ui URL (repeatable)")
+    parser.add_argument("--subscription", action="append", default=[], metavar="PATH",
+                        help="refresh VLESS lists from a file or directory of 3x-ui subscription URLs")
+    parser.add_argument("-u", "--subscription-url", action="append", default=[], metavar="URL",
+                        help="use a 3x-ui subscription URL directly with -o (repeatable)")
     parser.add_argument("--subscription-url-file", action="append", default=[], metavar="FILE",
                         help="read one subscription URL from FILE or stdin (-)")
     parser.add_argument("--input", action="append", default=[], metavar="PATH",
                         help="convert one file or directory to json/, or read a list with -o")
     parser.add_argument("--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
-    parser.add_argument("--check", metavar="SING_BOX", help="validate with sing-box without saving JSON")
+    parser.add_argument("--check", metavar="SING_BOX", help="validate with sing-box without saving output")
     args = parser.parse_args(argv)
+    # Keep accepting raw URLs supplied through the older --subscription syntax.
+    subscription_paths = []
+    for value in args.subscription:
+        if value.lower().startswith(("https://", "http://")):
+            args.subscription_url.append(value)
+        else:
+            subscription_paths.append(value)
     sources = args.input + args.subscription_url_file
-    if not (args.vless or args.subscription or sources) or sources.count("-") > 1:
+    if not (args.vless or args.subscription_url or subscription_paths or sources) or sources.count("-") > 1:
         parser.error("")
-    if args.output is None and (len(args.input) != 1 or args.input[0] == "-"
-                                or args.vless or args.subscription or args.subscription_url_file):
+    if args.output is None and (len(args.input + subscription_paths) != 1 or "-" in sources
+                                or args.vless or args.subscription_url or args.subscription_url_file):
         parser.error("")
     try:
         template = load_input(str(args.template)).decode("utf-8-sig")
         checker = args.check
         if checker and "/" in checker:
             checker = str(Path(checker).absolute())
+        subscription_files = [file for name in subscription_paths
+                              for file in input_files(Path(name), args.template)]
         if args.output is None:
-            return convert_link_files(Path(args.input[0]), args.template, template, checker)
+            files = subscription_files or input_files(Path(args.input[0]), args.template)
+            output_dir = Path("vless-links" if subscription_files else "json").absolute()
+            return process_files(files, output_dir, args.template, template, checker,
+                                 bool(subscription_files), args.allow_http)
 
         destination = args.output.absolute()
-        input_paths = [args.template, *(Path(name) for name in sources if name != "-")]
+        input_paths = [args.template, *subscription_files, *(Path(name) for name in sources if name != "-")]
         if any(destination.resolve() == path.resolve() for path in input_paths):
             raise ConversionError("Output must differ from template and input files.")
         links = [(f"VLESS argument {i}", link.strip()) for i, link in enumerate(args.vless, 1)]
@@ -443,14 +489,13 @@ def main(argv=None):
         url_files = (load_input(name).decode("utf-8-sig").strip()
                      for name in args.subscription_url_file)
         subscriptions = (fetch_subscription(url, args.allow_http)
-                         for url in (*args.subscription, *url_files))
+                         for url in (*args.subscription_url, *url_files))
+        local_subscriptions = (fetch_url_file(path, args.allow_http) for path in subscription_files)
         skipped = 0
-        for source, data in enumerate(chain(payloads, subscriptions), 1):
-            for entry, link in enumerate(subscription_lines(data), 1):
-                if not link.lower().startswith("vless:"):
-                    skipped += 1
-                    continue
-                links.append((f"Input {source}, entry {entry}", link))
+        for source, data in enumerate(chain(payloads, subscriptions, local_subscriptions), 1):
+            entries, ignored = vless_entries(data, source)
+            links.extend(entries)
+            skipped += ignored
         config, count = build_config(template, links)
         save_or_check_config(config, destination, checker)
     except ConversionError as error:

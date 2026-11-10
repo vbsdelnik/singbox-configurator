@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import stat
@@ -6,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 from urllib.request import Request
@@ -170,13 +172,13 @@ class ConverterTests(unittest.TestCase):
             (sources / "nested").mkdir()
             (sources / "phone.txt").write_text(REALITY, encoding="utf-8")
             (sources / "tablet").write_text(WS, encoding="utf-8")
-            (sources / "broken.txt").write_bytes(PAYLOAD)
+            (sources / "broken.txt").write_bytes(b"vmess://demo\n" + PAYLOAD)
             output = root / "json"
             output.mkdir()
             (output / "broken.json").write_text("previous", encoding="utf-8")
             result = self.run_cli("--input", sources, cwd=root)
             self.assertEqual(result.returncode, 1)
-            self.assertIn(b"Expected exactly one VLESS URI", result.stderr)
+            self.assertIn(b"Expected a file containing VLESS URIs", result.stderr)
             self.assertEqual(sorted(path.name for path in output.iterdir()),
                              ["broken.json", "phone.json", "tablet.json"])
             self.assertEqual((output / "broken.json").read_text(encoding="utf-8"), "previous")
@@ -194,6 +196,62 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn(b"same output filename", result.stderr)
             self.assertFalse((root / "json").exists())
+
+    def test_subscription_refresh_and_json_generation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = root / "subscriptions"
+            sources.mkdir()
+            output = root / "vless-links"
+            output.mkdir()
+            (sources / "base64.txt").write_text("https://example.org/sub/base64", encoding="utf-8")
+            (sources / "plain").write_text("https://example.org/sub/plain", encoding="utf-8")
+            (sources / "unavailable").write_text("https://example.org/sub/unavailable", encoding="utf-8")
+            (output / "base64.txt").write_text("old", encoding="utf-8")
+            (output / "unavailable").write_text(REALITY, encoding="utf-8")
+            results = [base64.b64encode(PAYLOAD), WS.encode(),
+                       converter.ConversionError("Subscription download failed.")]
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with redirect_stderr(io.StringIO()), patch.object(
+                    converter, "fetch_subscription", side_effect=results
+                ):
+                    status = converter.main(["--subscription", "subscriptions/"])
+                self.assertEqual(status, 1)
+                self.assertEqual((output / "base64.txt").read_bytes(), PAYLOAD)
+                self.assertEqual((output / "plain").read_text(encoding="utf-8"), WS + "\n")
+                self.assertEqual((output / "unavailable").read_text(encoding="utf-8"), REALITY)
+
+                with redirect_stderr(io.StringIO()), patch.object(
+                    converter, "fetch_subscription", return_value=b"vmess://demo"
+                ):
+                    status = converter.main(["--subscription", "subscriptions/base64.txt"])
+                self.assertEqual(status, 1)
+                self.assertEqual((output / "base64.txt").read_bytes(), PAYLOAD)
+
+                self.assertEqual(self.run_cli("--input", output, cwd=root).returncode, 0)
+                config = json.loads((root / "json" / "base64.json").read_text(encoding="utf-8"))
+                self.assertEqual([item["tag"] for item in config["outbounds"] if item["type"] == "vless"],
+                                 ["Demo REALITY", "Demo WebSocket"])
+            finally:
+                os.chdir(previous)
+
+    def test_subscription_file_and_raw_url_can_write_json_directly(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            url = "https://example.org/sub/token"
+            source = root / "subscription.txt"
+            source.write_text(url, encoding="utf-8")
+            output = root / "config.json"
+            for option, value in (("--subscription", str(source)), ("-u", url), ("--subscription", url)):
+                with redirect_stderr(io.StringIO()), patch.object(
+                    converter, "fetch_subscription", return_value=PAYLOAD
+                ) as fetch:
+                    self.assertEqual(converter.main([option, value, "-o", str(output)]), 0)
+                fetch.assert_called_once_with(url, False)
+                config = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(sum(item["type"] == "vless" for item in config["outbounds"]), 2)
 
     def test_checker_failure_keeps_existing_output(self):
         with tempfile.TemporaryDirectory() as folder:
