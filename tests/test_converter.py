@@ -273,6 +273,74 @@ class ConverterTests(unittest.TestCase):
                 config = json.loads(output.read_text(encoding="utf-8"))
                 self.assertEqual(sum(item["type"] == "vless" for item in config["outbounds"]), 2)
 
+    def test_subscription_transaction_prepares_every_input_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = root / "subscriptions"
+            sources.mkdir()
+            url = "https://example.org/sub/private-token"
+            for name in ("first.txt", "second.txt"):
+                (sources / name).write_text(url, encoding="utf-8")
+            links = root / "vless-links"
+            links.mkdir()
+            previous_links = links / "first.txt"
+            previous_links.write_text("previous", encoding="utf-8")
+
+            def invoke(payloads, *extra):
+                with redirect_stderr(io.StringIO()), patch.object(
+                    converter, "fetch_subscription", side_effect=payloads
+                ):
+                    return converter.main(["-s", "subscriptions/", "-w", *extra])
+
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                self.assertEqual(invoke([PAYLOAD, b"vmess://demo"]), 1)
+                self.assertEqual(previous_links.read_text(encoding="utf-8"), "previous")
+                self.assertFalse((links / "second.txt").exists())
+                self.assertFalse((root / "json").exists())
+
+                if TEST_BINARY:
+                    self.assertEqual(invoke([PAYLOAD, WS.encode()], "-c", TEST_BINARY), 0)
+                    self.assertFalse((root / "json").exists())
+                    self.assertEqual(previous_links.read_text(encoding="utf-8"), "previous")
+
+                self.assertEqual(invoke([PAYLOAD, WS.encode()]), 0)
+                self.assertEqual(previous_links.read_bytes(), PAYLOAD)
+                self.assertEqual(sorted(path.name for path in (root / "json").iterdir()),
+                                 ["first.json", "second.json"])
+                journal = (root / "converter.log").read_text(encoding="utf-8")
+                self.assertIn("finished with exit code 1", journal)
+                self.assertIn("publishing 4 output(s)", journal)
+                self.assertIn("finished with exit code 0", journal)
+                self.assertNotIn(url, journal)
+                self.assertNotIn(REALITY, journal)
+                self.assertFalse((root / ".converter.lock").exists())
+            finally:
+                os.chdir(previous)
+
+    def test_batch_publication_restores_previous_files_on_write_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first, second, third = (root / name for name in ("first", "second", "third"))
+            first.write_bytes(b"previous")
+            first.chmod(0o640)
+            original_replace = Path.replace
+            audit = []
+
+            def fail_last(source, destination):
+                if destination == third:
+                    raise OSError("simulated write error")
+                return original_replace(source, destination)
+
+            with patch.object(Path, "replace", fail_last), self.assertRaises(OSError):
+                converter.publish_batch([(first, b"updated"), (second, b"new"), (third, b"new")],
+                                        audit.append)
+            self.assertEqual(first.read_bytes(), b"previous")
+            self.assertEqual(stat.S_IMODE(first.stat().st_mode), 0o640)
+            self.assertEqual(list(root.iterdir()), [first])
+            self.assertTrue(any("rolled back" in message for message in audit))
+
     def test_checker_failure_keeps_existing_output(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "config.json"

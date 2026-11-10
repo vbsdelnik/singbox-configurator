@@ -5,13 +5,17 @@ import argparse
 import base64
 import binascii
 import json
+import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
 import unicodedata
 import uuid
+from contextlib import ExitStack
+from datetime import datetime, timezone
 from itertools import chain
 from pathlib import Path
 from urllib.error import HTTPError
@@ -400,7 +404,7 @@ def write_links(links, destination):
         staged.unlink(missing_ok=True)
 
 
-def process_files(files, output_dir, template_path, template, checker, subscription, allow_http):
+def process_files(files, output_dir, template_path, template, checker, subscription, allow_http, audit):
     destinations = [output_dir / (path.name if subscription else path.stem + ".json") for path in files]
     names = {unicodedata.normalize("NFC", path.name).casefold() for path in destinations}
     if len(names) != len(destinations):
@@ -424,12 +428,15 @@ def process_files(files, output_dir, template_path, template, checker, subscript
             else:
                 save_or_check_config(config, destination, checker)
         except ConversionError as error:
+            audit(f"input {index}: {error}")
             print(f"Error in input file {index}: {error}", file=sys.stderr)
         except (OSError, UnicodeError, ValueError, RuntimeError):
+            audit(f"input {index}: read or write failed")
             print(f"Error in input file {index}: could not read input or write configuration.",
                   file=sys.stderr)
         else:
             completed += 1
+    audit(f"completed {completed} of {len(files)} input(s)")
     if checker:
         report_check_result(completed, len(files))
     else:
@@ -438,7 +445,134 @@ def process_files(files, output_dir, template_path, template, checker, subscript
     return int(completed != len(files))
 
 
+def publish_batch(outputs, audit):
+    with ExitStack() as cleanup:
+        staged = []
+        for destination, content in outputs:
+            if not destination.parent.exists():
+                destination.parent.mkdir()
+                cleanup.callback(remove_empty_directory, destination.parent)
+            with tempfile.NamedTemporaryFile(prefix=".converter-", dir=destination.parent,
+                                             delete=False) as stream:
+                temporary = Path(stream.name)
+                cleanup.callback(temporary.unlink, missing_ok=True)
+                stream.write(content)
+            backup = None
+            if destination.exists():
+                with tempfile.NamedTemporaryFile(prefix=".converter-", dir=destination.parent,
+                                                 delete=False) as stream:
+                    backup = Path(stream.name)
+                # Keep backups private. Restore file contents and mode on rollback.
+                cleanup.callback(backup.unlink, missing_ok=True)
+                shutil.copyfile(destination, backup)
+            staged.append((temporary, destination, backup,
+                           destination.stat().st_mode if backup else None))
+
+        published = []
+        try:
+            for temporary, destination, backup, mode in staged:
+                published.append((destination, backup, mode))
+                temporary.replace(destination)
+        except (OSError, KeyboardInterrupt):
+            failed = 0
+            for destination, backup, mode in reversed(published):
+                try:
+                    if backup is None:
+                        destination.unlink(missing_ok=True)
+                    else:
+                        backup.replace(destination)
+                        destination.chmod(mode)
+                except OSError:
+                    failed += 1
+            if failed:
+                # Leave the remaining staged files and backups available for recovery.
+                cleanup.pop_all()
+                audit(f"rollback incomplete for {failed} output(s); recovery files retained")
+                raise ConversionError("Rollback incomplete. Recovery files were retained.") from None
+            audit(f"rolled back {len(published)} output(s)")
+            raise
+
+
+def remove_empty_directory(path):
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def write_subscription_json(files, template_path, template, checker, allow_http, audit):
+    links_dir = Path("vless-links").absolute()
+    json_dir = Path("json").absolute()
+    pairs = [(links_dir / path.name, json_dir / (path.stem + ".json")) for path in files]
+    protected = {path.resolve() for path in [template_path, *files]}
+    targets = set()
+    for destination in chain.from_iterable(pairs):
+        resolved = destination.resolve()
+        key = unicodedata.normalize("NFC", str(resolved)).casefold()
+        if key in targets or resolved in protected:
+            raise ConversionError("Conflicting input or output filenames.")
+        if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+            raise ConversionError("Output destination must be a regular file.")
+        targets.add(key)
+
+    outputs = []
+    audit(f"preparing {len(files)} subscription(s)")
+    for index, (path, (links_path, json_path)) in enumerate(zip(files, pairs), 1):
+        try:
+            data = fetch_url_file(path, allow_http)
+            audit(f"subscription {index}: downloaded")
+            links, _ = vless_entries(data, index)
+            config, count = build_config(template, links)
+            if checker:
+                save_or_check_config(config, json_path, checker)
+            else:
+                outputs.extend([
+                    (links_path, "".join(link + "\n" for _, link in links).encode("utf-8")),
+                    (json_path, (json.dumps(config, ensure_ascii=False, indent=2, allow_nan=False)
+                                 + "\n").encode("utf-8")),
+                ])
+            audit(f"subscription {index}: {'validated' if checker else 'converted'} ({count} node(s))")
+        except ConversionError as error:
+            raise ConversionError(f"Subscription {index}: {error}") from None
+
+    if checker:
+        report_check_result(len(files), len(files))
+    else:
+        audit(f"publishing {len(outputs)} output(s)")
+        publish_batch(outputs, audit)
+        print(f"Saved {len(files)} VLESS list(s) and {len(files)} JSON configuration(s).", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
+    try:
+        with open("converter.log", "a", encoding="utf-8",
+                  opener=lambda path, flags: os.open(path, flags, 0o600)) as journal:
+            operation = uuid.uuid4().hex[:12]
+
+            def audit(message):
+                timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                journal.write(f"{timestamp} [{operation}] {message}\n")
+                journal.flush()
+
+            audit("started")
+            try:
+                result = run(argv, audit)
+            except SystemExit as error:
+                audit(f"finished with exit code {error.code}")
+                raise
+            except KeyboardInterrupt:
+                audit("interrupted")
+                print("Error: operation interrupted.", file=sys.stderr)
+                return 130
+            audit(f"finished with exit code {result}")
+            return result
+    except OSError:
+        print("Error: could not write converter.log.", file=sys.stderr)
+        return 1
+
+
+def run(argv, audit):
     parser = SafeParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("-t", "--template", type=Path, default=TEMPLATE, metavar="PATH",
                         help="Use the specified JSONC template.")
@@ -461,6 +595,8 @@ def main(argv=None):
                         help="Validate with sing-box without saving output.")
     parser.add_argument("-a", "--allow-http", action="store_true",
                         help="Allow direct HTTP requests to subscription URLs.")
+    parser.add_argument("-w", "--write-json", action="store_true",
+                        help="With --subscription, save both VLESS links and JSON as one operation.")
     args = parser.parse_args(argv)
     # Keep accepting raw URLs supplied through the older --subscription syntax.
     subscription_paths = []
@@ -474,6 +610,25 @@ def main(argv=None):
     if args.output is None and (len(args.input + subscription_paths) != 1 or "-" in args.input
                                 or args.vless or args.subscription_url):
         parser.error("")
+    if args.write_json and (len(subscription_paths) != 1 or args.output is not None):
+        parser.error("")
+    mode = ("subscription transaction" if args.write_json else "combined JSON" if args.output
+            else "subscription refresh" if subscription_paths else "file conversion")
+    audit(f"mode: {mode}; dry run: {bool(args.check)}")
+    with ExitStack() as cleanup:
+        if not args.check:
+            lock = Path(".converter.lock")
+            try:
+                lock.mkdir()
+            except OSError:
+                audit("could not acquire write lock")
+                print("Error: could not acquire .converter.lock.", file=sys.stderr)
+                return 1
+            cleanup.callback(lock.rmdir)
+        return execute(args, subscription_paths, audit)
+
+
+def execute(args, subscription_paths, audit):
     try:
         template = load_input(str(args.template)).decode("utf-8-sig")
         checker = args.check
@@ -481,15 +636,18 @@ def main(argv=None):
             checker = str(Path(checker).absolute())
         subscription_files = [file for name in subscription_paths
                               for file in input_files(Path(name), args.template)]
+        if args.write_json:
+            return write_subscription_json(subscription_files, args.template, template, checker,
+                                           args.allow_http, audit)
         if args.output is None:
             files = subscription_files or input_files(Path(args.input[0]), args.template)
             output_dir = Path("vless-links" if subscription_files else "json").absolute()
             return process_files(files, output_dir, args.template, template, checker,
-                                 bool(subscription_files), args.allow_http)
+                                 bool(subscription_files), args.allow_http, audit)
 
         destination = args.output.absolute()
         input_paths = [args.template, *subscription_files, *(Path(name) for name in args.input if name != "-")]
-        if any(destination.resolve() == path.resolve() for path in input_paths):
+        if any(destination.resolve() == path.resolve() for path in [*input_paths, Path("converter.log")]):
             raise ConversionError("Output must differ from template and input files.")
         links = [(f"VLESS argument {i}", link.strip()) for i, link in enumerate(args.vless, 1)]
         payloads = (load_input(name) for name in args.input)
@@ -504,9 +662,11 @@ def main(argv=None):
         config, count = build_config(template, links)
         save_or_check_config(config, destination, checker)
     except ConversionError as error:
+        audit(f"error: {error}")
         print(f"Error: {error}", file=sys.stderr)
         return 1
     except (OSError, UnicodeError, ValueError, RuntimeError):
+        audit("error: could not read inputs or write the configuration")
         print("Error: could not read inputs or write the configuration.", file=sys.stderr)
         return 1
     if checker:

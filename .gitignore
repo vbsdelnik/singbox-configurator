@@ -13,3 +13,6 @@ config.json
 config.local*.json
 .sing-box-*.json
 cache.db*
+
+/converter.log
+/.converter.lock/
