@@ -14,7 +14,7 @@ import converter
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATE = converter.TEMPLATE.read_text(encoding="utf-8")
-PAYLOAD = (ROOT / "examples" / "vless.txt").read_bytes()
+PAYLOAD = (ROOT / "3x-ui-demo-links" / "vless.txt").read_bytes()
 REALITY, WS = PAYLOAD.decode().splitlines()
 
 

@@ -4,10 +4,10 @@
 
 ## Запуск
 
-Команды выполняются из каталога с `converter.py`. Пример использует вымышленные UUID и адреса из диапазона для документации.
+Команды выполняются из каталога с `converter.py`. В `3x-ui-demo-links/vless.txt` лежат две демонстрационные VLESS-ссылки с вымышленными UUID и адресами из диапазона для документации.
 
 ```sh
-python3 converter.py --input examples/vless.txt -o config.json
+python3 converter.py --input 3x-ui-demo-links/vless.txt -o config.json
 ```
 
 Для одной или нескольких ссылок сохраните их по одной на строку в локальном файле `private-vless.txt`. Сохранённый ответ сервера подписки можно передать тем же способом.
@@ -53,7 +53,7 @@ python3 converter.py --template er2-bublik.json --input private-vless.txt -o con
 Выходной файл содержит UUID и параметры подключения. На macOS/Linux он создаётся с правами `0600`. У поставляемого шаблона поле секрета Clash API пустое, поэтому конвертер генерирует новый случайный секрет при каждом запуске. Непустой секрет пользовательского шаблона сохраняется. Сообщения CLI содержат только статус и позицию записи. Вывод внешней проверки скрыт, поскольку он может включать значения из конфига.
 
 ```sh
-python3 converter.py --input examples/vless.txt --check sing-box -o config.json
+python3 converter.py --input 3x-ui-demo-links/vless.txt --check sing-box -o config.json
 python3 -B -m unittest -v
 SING_BOX_TEST_BINARY="$(command -v sing-box)" python3 -B -m unittest -v
 ```
