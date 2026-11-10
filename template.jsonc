@@ -1,0 +1,170 @@
+{
+  "dns": {
+    "final": "direct_dns_resolver",
+    "independent_cache": false,
+    "rules": [
+      {
+        "rule_set": "ru-domains",
+        "server": "yandex_doh"
+      },
+      {
+        "server": "google_doh"
+      }
+    ],
+    "servers": [
+      {
+        "tag": "local_dns_resolver",
+        "type": "local"
+      },
+      {
+        "server": "8.8.8.8",
+        "server_port": 53,
+        "tag": "direct_dns_resolver",
+        "type": "udp"
+      },
+      {
+        "domain_resolver": "direct_dns_resolver",
+        "path": "/dns-query",
+        "server": "dns.google",
+        "server_port": 443,
+        "tag": "google_doh",
+        "type": "https"
+      },
+      {
+        "domain_strategy": "prefer_ipv4",
+        "path": "/dns-query",
+        "server": "77.88.8.88",
+        "server_port": 443,
+        "tag": "yandex_doh",
+        "type": "https"
+      }
+    ],
+    "strategy": "prefer_ipv4"
+  },
+  "endpoints": [
+    /** @ParserSTART_E */
+/** @ParserEND_E */
+  ],
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": ""
+    }
+  },
+  "inbounds": [
+    {
+      "address": "172.16.0.1/30",
+      "auto_route": true,
+      "interface_name": "singbox-tun0",
+      "mtu": 1492,
+      "stack": "system",
+      "strict_route": false,
+      "tag": "tun-in",
+      "type": "tun"
+    }
+  ],
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "outbounds": [
+    /** @ParserSTART */
+	{"tag":"auto-proxy-out","type":"urltest","outbounds":["@VLESS@"],"interrupt_exist_connections":true,"url":"https://cp.cloudflare.com/generate_204","interval":"5m","tolerance":100},
+	{"tag":"proxy-out","type":"selector","outbounds":["direct-out","auto-proxy-out","@VLESS@"],"interrupt_exist_connections":true,"default":"auto-proxy-out"},
+	{"tag":"ru VPN 🇷🇺","type":"selector","outbounds":["direct-out"],"interrupt_exist_connections":true,"default":"direct-out"},
+	{"tag":"vpn ①","type":"selector","outbounds":["direct-out","proxy-out","@VLESS@"],"interrupt_exist_connections":true,"default":"proxy-out"},
+	{"tag":"vpn ②","type":"selector","outbounds":["direct-out","proxy-out","@VLESS@"],"interrupt_exist_connections":true,"default":"proxy-out"},
+/** @ParserEND */
+    {"tag":"direct-out","type":"direct"}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "direct_dns_resolver",
+    "final": "proxy-out",
+    "rule_set": [
+      {
+        "format": "domain_suffix",
+        "rules": [
+          {
+            "domain_suffix": [
+              "ru",
+              "xn--p1ai",
+              "su",
+              "xn--p1acf",
+              "xn--80adxhks",
+              "moscow",
+              "tatar",
+              "xn--d1acj3b",
+              "xn--80aswg",
+              "xn--c1avg",
+              "xn--j1aef"
+            ]
+          }
+        ],
+        "tag": "ru-domains",
+        "type": "inline"
+      }
+    ],
+    "rules": [
+      {
+        "action": "resolve",
+        "inbound": "tun-in",
+        "strategy": "prefer_ipv4"
+      },
+      {
+        "action": "sniff",
+        "inbound": "tun-in",
+        "timeout": "1s"
+      },
+      {
+        "action": "hijack-dns",
+        "protocol": "dns"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct-out"
+      },
+      {
+        "domain_suffix": [
+          "local",
+          "lan"
+        ],
+        "outbound": "direct-out"
+      },
+      {
+        "outbound": "direct-out",
+        "rule_set": "ru-domains"
+      },
+      {
+        "outbound": "direct-out",
+        "protocol": [
+          "bittorrent"
+        ]
+      },
+      {
+        "network": [
+          "tcp",
+          "udp"
+        ],
+        "outbound": "direct-out",
+        "port": [
+          3659,
+          1935,
+          5001,
+          5795,
+          5796,
+          7000,
+          7777,
+          9000,
+          10039,
+          10040
+        ],
+        "port_range": "27000:27100"
+      }
+    ]
+  }
+}

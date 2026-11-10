@@ -1,0 +1,15 @@
+# Python and macOS
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# Local credentials, original export and generated configs
+.env
+.env.*
+private-*
+er2-bublik.json
+config.json
+config.local*.json
+.sing-box-*.json
+cache.db*
