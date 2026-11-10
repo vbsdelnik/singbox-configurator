@@ -440,17 +440,19 @@ def process_files(files, output_dir, template_path, template, checker, subscript
 
 def main(argv=None):
     parser = SafeParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("--template", type=Path, default=TEMPLATE, help="JSONC template")
+    parser.add_argument("-t", "--template", type=Path, default=TEMPLATE, help="JSONC template")
     parser.add_argument("-o", "--output", type=Path, help="combine sources into this JSON file")
-    parser.add_argument("--vless", action="append", default=[], metavar="URI", help="VLESS link (repeatable)")
-    parser.add_argument("--subscription", action="append", default=[], metavar="PATH",
+    parser.add_argument("-v", "--vless", action="append", default=[], metavar="URI", help="VLESS link (repeatable)")
+    parser.add_argument("-s", "--subscription", action="append", default=[], metavar="PATH",
                         help="refresh VLESS lists from a file or directory of 3x-ui subscription URLs")
     parser.add_argument("-u", "--subscription-url", action="append", default=[], metavar="URL",
                         help="use a 3x-ui subscription URL directly with -o (repeatable)")
-    parser.add_argument("--input", action="append", default=[], metavar="PATH",
-                        help="convert one file or directory to json/, or read a list with -o")
-    parser.add_argument("--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
-    parser.add_argument("--check", metavar="SING_BOX", help="validate with sing-box without saving output")
+    parser.add_argument("-i", "--input", action="append", default=[], metavar="PATH",
+                        help="without -o: read one file or scan a directory and write one JSON per file "
+                             "to json/. With -o: read a file or stdin (-) and combine sources "
+                             "into the specified JSON file")
+    parser.add_argument("-a", "--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
+    parser.add_argument("-c", "--check", metavar="SING_BOX", help="validate with sing-box without saving output")
     args = parser.parse_args(argv)
     # Keep accepting raw URLs supplied through the older --subscription syntax.
     subscription_paths = []
