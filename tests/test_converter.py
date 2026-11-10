@@ -12,19 +12,15 @@ from urllib.request import Request
 
 import converter
 
-ROOT = Path(__file__).resolve().parent
+TESTS = Path(__file__).resolve().parent
+ROOT = TESTS.parent
 TEMPLATE = converter.TEMPLATE.read_text(encoding="utf-8")
-REALITY = (
-    "vless://11111111-1111-4111-8111-111111111111@192.0.2.10:443"
-    "?type=tcp&encryption=none&security=reality&flow=xtls-rprx-vision"
-    "&sni=example.com&fp=chrome&pbk=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
-    "&sid=0123456789abcdef&spx=%2F#Demo%20REALITY"
+PAYLOAD = (TESTS / "demo-vless.txt").read_bytes()
+REALITY, WS = PAYLOAD.decode("utf-8").splitlines()
+LOCAL_BINARY = TESTS / ("sing-box.exe" if os.name == "nt" else "sing-box")
+TEST_BINARY = os.environ.get("SING_BOX_TEST_BINARY") or (
+    str(LOCAL_BINARY) if LOCAL_BINARY.is_file() else None
 )
-WS = (
-    "vless://22222222-2222-4222-8222-222222222222@192.0.2.20:443"
-    "?type=ws&security=tls&sni=example.org&host=example.org&path=%2Fdemo#Demo%20WebSocket"
-)
-PAYLOAD = ("\n".join((REALITY, WS)) + "\n").encode("utf-8")
 
 
 class ConverterTests(unittest.TestCase):
@@ -163,11 +159,11 @@ class ConverterTests(unittest.TestCase):
             self.assertEqual(output.read_text(), "previous")
             self.assertEqual(list(output.parent.iterdir()), [output])
 
-    @unittest.skipUnless(os.environ.get("SING_BOX_TEST_BINARY"), "set SING_BOX_TEST_BINARY for integration")
+    @unittest.skipUnless(TEST_BINARY, "place sing-box in tests/ or set SING_BOX_TEST_BINARY")
     def test_sing_box_check(self):
         with tempfile.TemporaryDirectory() as folder:
             result = self.run_cli("--input", "-", "-o", Path(folder) / "config.json",
-                                  "--check", os.environ["SING_BOX_TEST_BINARY"], data=PAYLOAD)
+                                  "--check", TEST_BINARY, data=PAYLOAD)
             self.assertEqual(result.returncode, 0, result.stderr)
 
 

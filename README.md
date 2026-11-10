@@ -65,9 +65,15 @@ python3 converter.py --input vls-links/vless.txt --check sing-box -o config.json
 
 ## Тесты
 
+В каталоге [`tests/`](tests/) находятся тесты и файл [`demo-vless.txt`](tests/demo-vless.txt) с демонстрационными ссылками для проверки генерации. Чтобы проверить свой демонстрационный набор, создайте `tests/private-demo.txt`, вставьте ссылки по одной на строку и подставьте этот путь в команду ниже. Git игнорирует файлы с префиксом `private-`.
+
+Для проверки конфига ядром скачайте архив для своей платформы из [официального релиза sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) и положите извлечённый исполняемый файл в `tests/sing-box` (на Windows — `tests/sing-box.exe`). На macOS или Linux при необходимости выполните `chmod +x tests/sing-box`. Бинарник хранится локально и исключён из Git.
+
 ```sh
 python3 -B -m unittest -v
-SING_BOX_TEST_BINARY="$(command -v sing-box)" python3 -B -m unittest -v
+python3 converter.py --input tests/demo-vless.txt --check ./tests/sing-box -o tests/demo-config.json
 ```
+
+Тесты автоматически находят бинарник в `tests/`. Для другого расположения задайте `SING_BOX_TEST_BINARY`. Если бинарника нет, проверка через ядро пропускается, остальные тесты запускаются. Демонстрационный конфиг проверяет синтаксис и загрузку настроек без подключения к VPN.
 
 [Формат VLESS в sing-box](https://sing-box.sagernet.org/configuration/outbound/vless/) · [Подписки 3x-ui](https://github.com/MHSanaei/3x-ui/blob/main/docs/content/docs/en/reference/api/subscription-server.mdx)
