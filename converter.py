@@ -461,9 +461,6 @@ def main(argv=None):
                         help="Validate with sing-box without saving output.")
     parser.add_argument("-a", "--allow-http", action="store_true",
                         help="Allow direct HTTP requests to subscription URLs.")
-    parser.add_argument("-v", dest="vless", action="extend", nargs="+", help=argparse.SUPPRESS)
-    parser.add_argument("--subscription-url", dest="subscription_url", action="extend", nargs="+",
-                        help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     # Keep accepting raw URLs supplied through the older --subscription syntax.
     subscription_paths = []

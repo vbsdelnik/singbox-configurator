@@ -240,14 +240,14 @@ class ConverterTests(unittest.TestCase):
     def test_direct_options_accept_multiple_values(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "config.json"
-            for option in ("-l", "--vless", "-v"):
+            for option in ("-l", "--vless"):
                 with self.subTest(option=option):
                     result = self.run_cli(option, REALITY, WS, "-o", output)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     config = json.loads(output.read_text(encoding="utf-8"))
                     self.assertEqual(sum(item["type"] == "vless" for item in config["outbounds"]), 2)
             urls = ["https://example.org/sub/a", "https://example.org/sub/b"]
-            for option in ("-u", "--url", "--subscription-url"):
+            for option in ("-u", "--url"):
                 with self.subTest(option=option), redirect_stderr(io.StringIO()), patch.object(
                     converter, "fetch_subscription", side_effect=[REALITY.encode(), WS.encode()]
                 ) as fetch:
