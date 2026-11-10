@@ -318,27 +318,37 @@ def build_config(template, links):
     return config, len(nodes)
 
 
-def write_config(config, destination, checker):
-    # Stage in the destination directory so the final replacement is atomic.
+def save_or_check_config(config, destination, checker):
+    # Only actual writes need staging on the same filesystem as the output.
+    staging_dir = None if checker else destination.parent
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".sing-box-",
-                                     suffix=".json", dir=destination.parent, delete=False) as stream:
+                                     suffix=".json", dir=staging_dir, delete=False) as stream:
         staged = Path(stream.name)
     try:
         with staged.open("w", encoding="utf-8") as stream:
             json.dump(config, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.write("\n")
-        if checker:
-            try:
-                result = subprocess.run([checker, "check", "-c", str(staged.absolute())],
-                                        cwd=destination.parent, timeout=30,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except (OSError, subprocess.TimeoutExpired):
-                raise ConversionError("Could not run sing-box check.") from None
-            if result.returncode:
-                raise ConversionError("sing-box check rejected the configuration.") from None
-        staged.replace(destination)
+        if not checker:
+            staged.replace(destination)
+            return
+        workdir = destination.parent if destination.parent.is_dir() else Path.cwd()
+        try:
+            result = subprocess.run([checker, "check", "-c", str(staged.absolute())],
+                                    cwd=workdir, timeout=30,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ConversionError("Could not run sing-box check.") from None
+        if result.returncode:
+            raise ConversionError("sing-box check rejected the configuration.") from None
     finally:
         staged.unlink(missing_ok=True)
+
+
+def report_check_result(passed, total):
+    print(f"sing-box check: {passed} of {total} configuration(s) passed. No JSON files written.",
+          file=sys.stderr)
+    if passed == total:
+        print("Run the same command without --check to save the configuration(s).", file=sys.stderr)
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -373,24 +383,28 @@ def convert_link_files(source, template_path, template, checker):
     if any(path.resolve() in protected for path in destinations):
         raise ConversionError("Output must differ from template and input files.")
 
-    output_dir.mkdir(exist_ok=True)
-    saved = 0
+    if not checker:
+        output_dir.mkdir(exist_ok=True)
+    completed = 0
     for index, (path, destination) in enumerate(zip(files, destinations), 1):
         try:
             uri = load_input(str(path)).decode("utf-8-sig").strip()
             if not uri.lower().startswith("vless://") or len(uri.splitlines()) != 1:
                 raise ConversionError("Expected exactly one VLESS URI.")
             config, _ = build_config(template, [("VLESS URI", uri)])
-            write_config(config, destination, checker)
+            save_or_check_config(config, destination, checker)
         except ConversionError as error:
             print(f"Error in input file {index}: {error}", file=sys.stderr)
         except (OSError, UnicodeError, ValueError, RuntimeError):
             print(f"Error in input file {index}: could not read input or write configuration.",
                   file=sys.stderr)
         else:
-            saved += 1
-    print(f"Saved {saved} of {len(files)} configuration(s) in json/.", file=sys.stderr)
-    return int(saved != len(files))
+            completed += 1
+    if checker:
+        report_check_result(completed, len(files))
+    else:
+        print(f"Saved {completed} of {len(files)} configuration(s) in json/.", file=sys.stderr)
+    return int(completed != len(files))
 
 
 def main(argv=None):
@@ -404,7 +418,7 @@ def main(argv=None):
     parser.add_argument("--input", action="append", default=[], metavar="PATH",
                         help="convert one file or directory to json/, or read a list with -o")
     parser.add_argument("--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
-    parser.add_argument("--check", metavar="SING_BOX", help="run sing-box check before replacing output")
+    parser.add_argument("--check", metavar="SING_BOX", help="validate with sing-box without saving JSON")
     args = parser.parse_args(argv)
     sources = args.input + args.subscription_url_file
     if not (args.vless or args.subscription or sources) or sources.count("-") > 1:
@@ -438,14 +452,17 @@ def main(argv=None):
                     continue
                 links.append((f"Input {source}, entry {entry}", link))
         config, count = build_config(template, links)
-        write_config(config, destination, checker)
+        save_or_check_config(config, destination, checker)
     except ConversionError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
     except (OSError, UnicodeError, ValueError, RuntimeError):
         print("Error: could not read inputs or write the configuration.", file=sys.stderr)
         return 1
-    print(f"Saved configuration with {count} VLESS node(s).", file=sys.stderr)
+    if checker:
+        report_check_result(1, 1)
+    else:
+        print(f"Saved configuration with {count} VLESS node(s).", file=sys.stderr)
     if skipped:
         print(f"Skipped {skipped} non-VLESS subscription entries.", file=sys.stderr)
     return 0

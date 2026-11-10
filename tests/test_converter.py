@@ -201,25 +201,43 @@ class ConverterTests(unittest.TestCase):
             output.write_text("previous")
             with patch.object(converter.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
                 with self.assertRaisesRegex(converter.ConversionError, "check rejected"):
-                    converter.write_config({}, output, "sing-box")
+                    converter.save_or_check_config({}, output, "sing-box")
             self.assertEqual(output.read_text(), "previous")
             self.assertEqual(list(output.parent.iterdir()), [output])
 
     @unittest.skipUnless(TEST_BINARY, "place sing-box in tests/ or set SING_BOX_TEST_BINARY")
     def test_sing_box_check(self):
         with tempfile.TemporaryDirectory() as folder:
-            result = self.run_cli("--input", "-", "-o", Path(folder) / "config.json",
-                                  "--check", TEST_BINARY, data=PAYLOAD)
-            self.assertEqual(result.returncode, 0, result.stderr)
             root = Path(folder)
+            output = root / "config.json"
+            for previous in (None, "previous"):
+                if previous:
+                    output.write_text(previous, encoding="utf-8")
+                result = self.run_cli("--input", "-", "-o", output,
+                                      "--check", TEST_BINARY, data=PAYLOAD)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(b"1 of 1 configuration(s) passed", result.stderr)
+                self.assertIn(b"without --check", result.stderr)
+                if previous:
+                    self.assertEqual(output.read_text(encoding="utf-8"), previous)
+                else:
+                    self.assertFalse(output.exists())
+
             links = root / "vless-links"
             links.mkdir()
             (links / "reality.txt").write_text(REALITY, encoding="utf-8")
             (links / "websocket.txt").write_text(WS, encoding="utf-8")
             result = self.run_cli("--input", links, "--check", TEST_BINARY, cwd=root)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(sorted(path.name for path in (root / "json").iterdir()),
-                             ["reality.json", "websocket.json"])
+            self.assertIn(b"2 of 2 configuration(s) passed", result.stderr)
+            self.assertFalse((root / "json").exists())
+
+            (links / "broken.txt").write_text("invalid", encoding="utf-8")
+            result = self.run_cli("--input", links, "--check", TEST_BINARY, cwd=root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b"2 of 3 configuration(s) passed", result.stderr)
+            self.assertNotIn(b"without --check", result.stderr)
+            self.assertFalse((root / "json").exists())
 
 
 if __name__ == "__main__":
