@@ -237,6 +237,26 @@ class ConverterTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_direct_options_accept_multiple_values(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "config.json"
+            for option in ("-l", "--vless", "-v"):
+                with self.subTest(option=option):
+                    result = self.run_cli(option, REALITY, WS, "-o", output)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    config = json.loads(output.read_text(encoding="utf-8"))
+                    self.assertEqual(sum(item["type"] == "vless" for item in config["outbounds"]), 2)
+            urls = ["https://example.org/sub/a", "https://example.org/sub/b"]
+            for option in ("-u", "--url", "--subscription-url"):
+                with self.subTest(option=option), redirect_stderr(io.StringIO()), patch.object(
+                    converter, "fetch_subscription", side_effect=[REALITY.encode(), WS.encode()]
+                ) as fetch:
+                    self.assertEqual(converter.main([option, *urls, "-o", str(output)]), 0)
+                    self.assertEqual([call.args for call in fetch.call_args_list],
+                                     [(url, False) for url in urls])
+                    config = json.loads(output.read_text(encoding="utf-8"))
+                    self.assertEqual(sum(item["type"] == "vless" for item in config["outbounds"]), 2)
+
     def test_subscription_file_and_raw_url_can_write_json_directly(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

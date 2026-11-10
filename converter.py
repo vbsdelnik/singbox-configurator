@@ -440,19 +440,30 @@ def process_files(files, output_dir, template_path, template, checker, subscript
 
 def main(argv=None):
     parser = SafeParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("-t", "--template", type=Path, default=TEMPLATE, help="JSONC template")
-    parser.add_argument("-o", "--output", type=Path, help="combine sources into this JSON file")
-    parser.add_argument("-v", "--vless", action="append", default=[], metavar="URI", help="VLESS link (repeatable)")
+    parser.add_argument("-t", "--template", type=Path, default=TEMPLATE, metavar="PATH",
+                        help="Use the specified JSONC template.")
+    parser.add_argument("-o", "--output", type=Path, metavar="PATH",
+                        help="Combine sources into one JSON file at PATH.")
+    parser.add_argument("-l", "--vless", action="extend", nargs="+", default=[], metavar="URI",
+                        help="Read one or more space-separated VLESS links. Use with -o.")
     parser.add_argument("-s", "--subscription", action="append", default=[], metavar="PATH",
-                        help="refresh VLESS lists from a file or directory of 3x-ui subscription URLs")
-    parser.add_argument("-u", "--subscription-url", action="append", default=[], metavar="URL",
-                        help="use a 3x-ui subscription URL directly with -o (repeatable)")
+                        help="Fetch subscriptions from a single file or all files in a directory, "
+                             "writing the resulting VLESS links to vless-links/<input_filename>. "
+                             "Use -o to combine subscriptions into one JSON file.")
+    parser.add_argument("-u", "--url", dest="subscription_url", action="extend", nargs="+",
+                        default=[], metavar="URL",
+                        help="Read one or more space-separated subscription URLs. Use with -o.")
     parser.add_argument("-i", "--input", action="append", default=[], metavar="PATH",
-                        help="without -o: read one file or scan a directory and write one JSON per file "
-                             "to json/. With -o: read a file or stdin (-) and combine sources "
-                             "into the specified JSON file")
-    parser.add_argument("-a", "--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
-    parser.add_argument("-c", "--check", metavar="SING_BOX", help="validate with sing-box without saving output")
+                        help="Convert VLESS links from a single file or all files in a directory, "
+                             "writing one JSON per input file to json/<input_filename>.json. "
+                             "Use -o to combine input files or stdin (-) into one JSON file.")
+    parser.add_argument("-c", "--check", metavar="SING_BOX",
+                        help="Validate with sing-box without saving output.")
+    parser.add_argument("-a", "--allow-http", action="store_true",
+                        help="Allow direct HTTP requests to subscription URLs.")
+    parser.add_argument("-v", dest="vless", action="extend", nargs="+", help=argparse.SUPPRESS)
+    parser.add_argument("--subscription-url", dest="subscription_url", action="extend", nargs="+",
+                        help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     # Keep accepting raw URLs supplied through the older --subscription syntax.
     subscription_paths = []
