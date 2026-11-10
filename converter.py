@@ -447,8 +447,6 @@ def main(argv=None):
                         help="refresh VLESS lists from a file or directory of 3x-ui subscription URLs")
     parser.add_argument("-u", "--subscription-url", action="append", default=[], metavar="URL",
                         help="use a 3x-ui subscription URL directly with -o (repeatable)")
-    parser.add_argument("--subscription-url-file", action="append", default=[], metavar="FILE",
-                        help="read one subscription URL from FILE or stdin (-)")
     parser.add_argument("--input", action="append", default=[], metavar="PATH",
                         help="convert one file or directory to json/, or read a list with -o")
     parser.add_argument("--allow-http", action="store_true", help="allow a direct HTTP subscription URL")
@@ -461,11 +459,10 @@ def main(argv=None):
             args.subscription_url.append(value)
         else:
             subscription_paths.append(value)
-    sources = args.input + args.subscription_url_file
-    if not (args.vless or args.subscription_url or subscription_paths or sources) or sources.count("-") > 1:
+    if not (args.vless or args.subscription_url or subscription_paths or args.input) or args.input.count("-") > 1:
         parser.error("")
-    if args.output is None and (len(args.input + subscription_paths) != 1 or "-" in sources
-                                or args.vless or args.subscription_url or args.subscription_url_file):
+    if args.output is None and (len(args.input + subscription_paths) != 1 or "-" in args.input
+                                or args.vless or args.subscription_url):
         parser.error("")
     try:
         template = load_input(str(args.template)).decode("utf-8-sig")
@@ -481,15 +478,13 @@ def main(argv=None):
                                  bool(subscription_files), args.allow_http)
 
         destination = args.output.absolute()
-        input_paths = [args.template, *subscription_files, *(Path(name) for name in sources if name != "-")]
+        input_paths = [args.template, *subscription_files, *(Path(name) for name in args.input if name != "-")]
         if any(destination.resolve() == path.resolve() for path in input_paths):
             raise ConversionError("Output must differ from template and input files.")
         links = [(f"VLESS argument {i}", link.strip()) for i, link in enumerate(args.vless, 1)]
         payloads = (load_input(name) for name in args.input)
-        url_files = (load_input(name).decode("utf-8-sig").strip()
-                     for name in args.subscription_url_file)
         subscriptions = (fetch_subscription(url, args.allow_http)
-                         for url in (*args.subscription_url, *url_files))
+                         for url in args.subscription_url)
         local_subscriptions = (fetch_url_file(path, args.allow_http) for path in subscription_files)
         skipped = 0
         for source, data in enumerate(chain(payloads, subscriptions, local_subscriptions), 1):

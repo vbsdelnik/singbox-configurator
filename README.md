@@ -60,7 +60,7 @@ python3 converter.py --subscription subscriptions/ -o config.json
 python3 converter.py --input vless-links/phone.txt --input vless-links/tablet.txt -o config.json
 ```
 
-Для прямой передачи URL есть `-u` (`--subscription-url`). Чтобы токен не попадал в историю команд и список процессов, передавайте путь к файлу через `--subscription`. Для совместимости `--subscription-url-file` по-прежнему читает URL из файла или stdin (`-`) с `-o`. При сборке общего конфига `--input` также принимает сохранённое тело подписки в plain text или Base64.
+Для прямой передачи URL есть `-u` (`--subscription-url`). Чтобы токен не попадал в историю команд и список процессов, передавайте путь к файлу через `--subscription`. При сборке общего конфига `--input` также принимает сохранённое тело подписки в plain text или Base64.
 
 ## Как работает конвертер
 
