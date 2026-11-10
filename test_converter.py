@@ -14,8 +14,17 @@ import converter
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATE = converter.TEMPLATE.read_text(encoding="utf-8")
-PAYLOAD = (ROOT / "3x-ui-demo-links" / "vless.txt").read_bytes()
-REALITY, WS = PAYLOAD.decode().splitlines()
+REALITY = (
+    "vless://11111111-1111-4111-8111-111111111111@192.0.2.10:443"
+    "?type=tcp&encryption=none&security=reality&flow=xtls-rprx-vision"
+    "&sni=example.com&fp=chrome&pbk=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+    "&sid=0123456789abcdef&spx=%2F#Demo%20REALITY"
+)
+WS = (
+    "vless://22222222-2222-4222-8222-222222222222@192.0.2.20:443"
+    "?type=ws&security=tls&sni=example.org&host=example.org&path=%2Fdemo#Demo%20WebSocket"
+)
+PAYLOAD = ("\n".join((REALITY, WS)) + "\n").encode("utf-8")
 
 
 class ConverterTests(unittest.TestCase):
